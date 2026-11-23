@@ -1,0 +1,24 @@
+{
+  "name": "token-radar",
+  "version": "1.0.0",
+  "description": "Token Launch Radar - Best token launch radar dashboard",
+  "main": "main.ts",
+  "scripts": {
+    "build": "tsx main.ts",
+    "dev": "tsx main.ts --input ../token-radar-01-kit/input/snapshot.json --output ../out"
+  },
+  "keywords": [
+    "defi",
+    "airdrop",
+    "token-radar",
+    "makefun"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  },
+  "dependencies": {
+    "puppeteer": "^25.18.1"
+  }
+}
