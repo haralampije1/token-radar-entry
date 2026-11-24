@@ -52,7 +52,19 @@ export interface ModelConstants {
   unknown_age_days: number;
 }
 
-export const MODEL: ModelConstants = {
+/** Extended model constants for advanced scoring. */
+export interface ExtendedModelConstants extends ModelConstants {
+  /** Weight for chain diversity (number of chains) */
+  chain_diversity_weight: number;
+  /** Weight for TVL stability (inverse of volatility proxy) */
+  stability_weight: number;
+  /** Bonus for protocols with TVL above certain thresholds */
+  tvl_tier_bonuses: Record<string, number>;
+  /** Category-specific multipliers */
+  category_multipliers: Record<string, number>;
+}
+
+export const MODEL: ExtendedModelConstants = {
   base_multiple: 0.25,
   growth_weight: 0.5,
   growth_floor: -60,
@@ -61,10 +73,41 @@ export const MODEL: ModelConstants = {
   maturity_range: 0.4,
   maturity_days: 1095,
   unknown_age_days: 365,
+  chain_diversity_weight: 0.02,
+  stability_weight: 0.1,
+  tvl_tier_bonuses: {
+    '10B': 1.15,
+    '1B': 1.10,
+    '500M': 1.05,
+    '100M': 1.02,
+  },
+  category_multipliers: {
+    'risk curators': 1.05,
+    'onchain capital allocator': 1.03,
+    'cdp': 1.02,
+    'rwa': 1.02,
+    'lending': 1.01,
+    'dexs': 1.0,
+    'yield': 1.0,
+    'bridge': 0.98,
+    'canonical bridge': 0.95,
+    'liquid staking': 0.95,
+    'restaking': 0.95,
+    'restaked btc': 0.95,
+    'liquid restaking': 0.95,
+    'perpetual': 1.0,
+    'derivative': 1.0,
+    'prediction': 1.0,
+    'curator': 1.03,
+    'allocator': 1.03,
+    'stable': 1.0,
+    'insurance': 1.01,
+    'cex': 0.9,
+  },
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-1';
+export const MODEL_VERSION = 'radar-2';
 
 /** How many pre-token protocols below the watchlist floor the early radar carries, by TVL. */
 export const EARLY_ROWS = 160;
@@ -101,6 +144,10 @@ export interface BoardRow {
     growth_multiplier: number;
     maturity_multiplier: number;
     age_days: number | null;
+    chain_diversity_multiplier: number;
+    stability_multiplier: number;
+    tvl_tier_multiplier: number;
+    category_multiplier: number;
   };
   farm_steps: string[];
 }
@@ -120,6 +167,10 @@ export interface RadarRow {
   implied_value_usd: number;
   growth_multiplier: number;
   maturity_multiplier: number;
+  chain_diversity_multiplier: number;
+  stability_multiplier: number;
+  tvl_tier_multiplier: number;
+  category_multiplier: number;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -172,17 +223,60 @@ export function ageDays(asOf: string, listedAt: string | null): number | null {
   return Math.max(0, Math.floor((a - b) / DAY_MS));
 }
 
-/** The three multipliers and the implied value one protocol gets under `model`. */
-export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: ModelConstants): { implied: number; growthPct: number; growthMult: number; maturityMult: number; age: number | null } {
+/** The multipliers and the implied value one protocol gets under `model`. */
+export function impliedValue(
+  protocol: SnapshotProtocol,
+  asOf: string,
+  model: ExtendedModelConstants
+): {
+  implied: number;
+  growthPct: number;
+  growthMult: number;
+  maturityMult: number;
+  chainDiversityMult: number;
+  stabilityMult: number;
+  tvlTierMult: number;
+  categoryMult: number;
+  age: number | null;
+} {
   const age = ageDays(asOf, protocol.listed_at);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
+
   const ageForModel = age ?? model.unknown_age_days;
   const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
+
   const base = protocol.tvl_usd * model.base_multiple;
-  const implied = Math.max(1, Math.round(base * growthMult * maturityMult));
-  return { implied, growthPct, growthMult, maturityMult, age };
+
+  const chainMult = 1 + Math.min(protocol.chains.length, 10) * model.chain_diversity_weight;
+  const stabilityMult = 1 + model.stability_weight * (1 - Math.min(Math.abs(growthPct) / 100, 1));
+
+  let tvlTierMult = 1;
+  if (protocol.tvl_usd >= 10_000_000_000) tvlTierMult = model.tvl_tier_bonuses['10B'];
+  else if (protocol.tvl_usd >= 1_000_000_000) tvlTierMult = model.tvl_tier_bonuses['1B'];
+  else if (protocol.tvl_usd >= 500_000_000) tvlTierMult = model.tvl_tier_bonuses['500M'];
+  else if (protocol.tvl_usd >= 100_000_000) tvlTierMult = model.tvl_tier_bonuses['100M'];
+
+  const catKey = (protocol.category ?? '').toLowerCase();
+  const categoryMult = model.category_multipliers[catKey] ?? 1.0;
+
+  const implied = Math.max(
+    1,
+    Math.round(base * growthMult * maturityMult * chainMult * stabilityMult * tvlTierMult * categoryMult)
+  );
+
+  return {
+    implied,
+    growthPct,
+    growthMult,
+    maturityMult,
+    chainDiversityMult: chainMult,
+    stabilityMult,
+    tvlTierMult,
+    categoryMult,
+    age,
+  };
 }
 
 /** DefiLlama's version-marker rule: a name ending in a release is a pool of another protocol. */
@@ -212,17 +306,13 @@ export interface BoardSummary {
 }
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
-export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
+export function buildBoard(snapshot: Snapshot, model: ExtendedModelConstants = MODEL): BoardRow[] {
   const index = bySlug(snapshot.protocols);
   const chosen = new Map<string, SnapshotProtocol>();
-  // The watchlist is the floor: every slug, even one the snapshot no longer carries (it cannot, but the
-  // board's coverage is the gate's row and is never gambled on a missing record).
   for (const slug of snapshot.watchlist) {
     const p = index.get(slug);
     if (p !== undefined) chosen.set(slug, p);
   }
-  // The early radar: pre-token protocols below the watchlist floor, by TVL, capped. Never a replacement
-  // for a watchlist row: a chosen protocol stays chosen.
   const early = snapshot.protocols
     .filter((p) => !chosen.has(p.slug) && isRankable(p) && p.tvl_usd < snapshot.floor_usd)
     .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
@@ -230,8 +320,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
   for (const p of early) chosen.set(p.slug, p);
 
   const scored = [...chosen.values()].map((p) => {
-    const { implied, growthPct, growthMult, maturityMult, age } = impliedValue(p, snapshot.as_of, model);
-    return { p, implied, growthPct, growthMult, maturityMult, age };
+    const vals = impliedValue(p, snapshot.as_of, model);
+    return { p, ...vals };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => ({
@@ -254,6 +344,10 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       growth_pct: s.growthPct,
       growth_multiplier: round4(s.growthMult),
       maturity_multiplier: round4(s.maturityMult),
+      chain_diversity_multiplier: round4(s.chainDiversityMult),
+      stability_multiplier: round4(s.stabilityMult),
+      tvl_tier_multiplier: round4(s.tvlTierMult),
+      category_multiplier: round4(s.categoryMult),
       age_days: s.age,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
@@ -262,7 +356,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
-/** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
+/** A step as one string: its action, then its cost and a time, within the gate's 20..600 characters. */
 export function stepText(step: FarmStep): string {
   let s = `${step.text} Cost: ${step.cost}. Time: ${step.time}.`;
   if (s.length > 600) s = `${s.slice(0, 596)}...`;
@@ -316,7 +410,13 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   const chain = chainOf(p);
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
-  const action = actionFor(p, capital, chain);
+  const c = (p.category ?? '').toLowerCase();
+  const name = p.name;
+  const isMultiChain = p.chains.length > 1;
+
+  const specificAction = actionFor(p, capital, chain);
+  const extraChainInfo = isMultiChain ? ` (also on ${p.chains.slice(1, 3).join(', ')})` : '';
+
   return [
     {
       text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
@@ -324,12 +424,12 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: '5 minutes',
     },
     {
-      text: action,
+      text: `${specificAction}${extraChainInfo}`,
       cost: `$${capital} of capital and about $${capital >= 150 ? 8 : 4} of gas`,
       time: '15 minutes to set up',
     },
     {
-      text: `Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.`,
+      text: `Make one qualifying action each week – deposit, borrow, swap, or vote – on ${name} to build activity history.`,
       cost: 'about $2 of gas a week',
       time: '10 minutes a week',
     },
@@ -339,7 +439,7 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
       time: `${hold} days`,
     },
     {
-      text: `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.`,
+      text: `Before you withdraw, open ${name}'s own points or rewards page and claim only from the link it publishes.`,
       cost: 'no fee to check, and never pay to claim',
       time: '10 minutes',
     },
@@ -384,11 +484,15 @@ export function radarRow(row: BoardRow): RadarRow {
     implied_value_usd: row.implied_value_usd,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
+    chain_diversity_multiplier: row.model.chain_diversity_multiplier,
+    stability_multiplier: row.model.stability_multiplier,
+    tvl_tier_multiplier: row.model.tvl_tier_multiplier,
+    category_multiplier: row.model.category_multiplier,
   };
 }
 
 /** Everything the dashboard renders, from the snapshot. */
-export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
+export function buildRadar(snapshot: Snapshot, model: ExtendedModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
   const board = buildBoard(snapshot, model);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
