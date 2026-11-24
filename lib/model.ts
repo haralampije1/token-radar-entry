@@ -143,11 +143,11 @@ export interface BoardRow {
     growth_pct: number;
     growth_multiplier: number;
     maturity_multiplier: number;
-    age_days: number | null;
     chain_diversity_multiplier: number;
     stability_multiplier: number;
     tvl_tier_multiplier: number;
     category_multiplier: number;
+    age_days: number | null;
   };
   farm_steps: string[];
 }

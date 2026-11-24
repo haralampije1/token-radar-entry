@@ -311,7 +311,7 @@
       el('div', { class: 'formula' },
         'implied = round( tvl_usd × ' + m.base_multiple + ' × (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 × ' + m.growth_weight + ') × (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' × ' + m.maturity_range + ') × (1 + chains×' + (m.chain_diversity_weight || 0) + ') × (1 + stability×' + (m.stability_weight || 0) + ') × tvlTier × category )'
       ),
-      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. Chain diversity adds up to 20% for 10+ chains. Stability rewards low volatility. TVL tiers and category multipliers apply as shown in each row\'s detail. The early radar is every pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.' })
+      el('p', { class: 'sub', text: 'TVL and seven-day growth come from the snapshot. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. Chain diversity adds up to 20% for 10+ chains. Stability rewards low volatility. TVL tiers and category multipliers apply as shown in each row’s detail. The early radar is every pre-token protocol below the watchlist floor, by TVL, and the live-token protocols are set aside with their market caps shown.' })
     );
   }
 
